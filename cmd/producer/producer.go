@@ -4,30 +4,31 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
 	"github.com/IBM/sarama"
 	"github.com/gin-gonic/gin"
-	"github.com/hosseinnourian/Golang-Notification-System/pkg/model"
+	"github.com/hosseinnourian/Golang-Notification-System/pkg/models"
 )
 
 const (
 	ProducerPort       = ":8080"
-	KafkaServerAddress  = "localhost:9092"
+	KafkaServerAddress = "localhost:9092"
 	KafkaTopic         = "notifications"
 )
 
-// ------------------------- HELPER FUNCTION -------------------------
+// ============== HELPER FUNCTIONS ==============
 var ErrUserNotFoundInProducer = errors.New("user not found")
 
-func findUserByID(id int, users []model.User) (model.User, error) {
+func findUserByID(id int, users []models.User) (models.User, error) {
 	for _, user := range users {
 		if user.ID == id {
 			return user, nil
 		}
 	}
-	return model.User{}, ErrUserNotFoundInProducer
+	return models.User{}, ErrUserNotFoundInProducer
 }
 
 func getIDFromRequest(formValue string, ctx *gin.Context) (int, error) {
@@ -40,23 +41,23 @@ func getIDFromRequest(formValue string, ctx *gin.Context) (int, error) {
 }
 
 // ============== KAFKA RELATED FUNCTIONS ==============
-
 func sendKafkaMessage(producer sarama.SyncProducer,
-	users []model.User, ctx *gin.Context, fromID, toID int,
-) error {
+	users []models.User, ctx *gin.Context, fromID, toID int) error {
 	message := ctx.PostForm("message")
 
 	fromUser, err := findUserByID(fromID, users)
 	if err != nil {
+		fmt.Println(err)
 		return err
 	}
 
 	toUser, err := findUserByID(toID, users)
 	if err != nil {
+		fmt.Println(err)
 		return err
 	}
 
-	notification := model.Notification{
+	notification := models.Notification{
 		From:    fromUser,
 		To:      toUser,
 		Message: message,
@@ -66,6 +67,7 @@ func sendKafkaMessage(producer sarama.SyncProducer,
 	if err != nil {
 		return fmt.Errorf("failed to marshal notification: %w", err)
 	}
+
 	msg := &sarama.ProducerMessage{
 		Topic: KafkaTopic,
 		Key:   sarama.StringEncoder(strconv.Itoa(toUser.ID)),
@@ -75,8 +77,9 @@ func sendKafkaMessage(producer sarama.SyncProducer,
 	_, _, err = producer.SendMessage(msg)
 	return err
 }
+
 func sendMessageHandler(producer sarama.SyncProducer,
-	users []model.User) gin.HandlerFunc {
+	users []models.User) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		fromID, err := getIDFromRequest("fromID", ctx)
 		if err != nil {
@@ -117,4 +120,30 @@ func setupProducer() (sarama.SyncProducer, error) {
 		return nil, fmt.Errorf("failed to setup producer: %w", err)
 	}
 	return producer, nil
+}
+
+func main() {
+	users := []models.User{
+		{ID: 1, Name: "Emma"},
+		{ID: 2, Name: "Bruno"},
+		{ID: 3, Name: "Rick"},
+		{ID: 4, Name: "Lena"},
+	}
+
+	producer, err := setupProducer()
+	if err != nil {
+		log.Fatalf("failed to initialize producer: %v", err)
+	}
+	defer producer.Close()
+
+	gin.SetMode(gin.ReleaseMode)
+	router := gin.Default()
+	router.POST("/send", sendMessageHandler(producer, users))
+
+	fmt.Printf("Kafka PRODUCER 📨 started at http://localhost%s\n",
+		ProducerPort)
+
+	if err := router.Run(ProducerPort); err != nil {
+		log.Printf("failed to run the server: %v", err)
+	}
 }

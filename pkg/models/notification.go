@@ -1,4 +1,4 @@
-package model
+package models
 
 type Notification struct {
 	From    User   `json:"from"`
